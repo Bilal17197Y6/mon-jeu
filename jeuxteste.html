@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Plateformer — style Mario-like (original)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="stage">
+    <div id="bg-sahara"></div>
+    <div id="bg-foret"></div>
+
+    <div id="ui">
+      <div class="info">Monde: <strong id="worldName">Sahara</strong></div>
+      <div class="info">Niveau: <strong id="levelNum">1</strong></div>
+      <div class="info">Score: <strong id="score">0</strong></div>
+      <button id="startBtn" class="btn">Jouer</button>
+      <div class="hint">← → ou A D = déplacer • Espace = sauter • Tomber sur tête = écraser</div>
+    </div>
+
+    <canvas id="game" width="1000" height="600"></canvas>
+  </div>
+
+<script>
+/*
+  Plateformer 2D style "Mario-like" (original assets drawn in canvas)
+  - Camera side-scrolling
+  - Pipes, platforms, Goomba-like enemies
+  - Jump & stomp to kill enemy
+  - 2 mondes (Sahara / Forêt) with 3 niveaux chacun (2 difficiles + 1 boss)
+  - Simple pixel-like drawing (no external images) so it's ready to run
+*/
+
+/* ---------- Setup ---------- */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const worldName = document.getElementById('worldName');
+const levelNum = document.getElementById('levelNum');
+const scoreEl = document.getElementById('score');
+const bgS = document.getElementById('bg-sahara');
+const bgF = document.getElementById('bg-foret');
+
+const VIEW_W = canvas.width;
+const VIEW_H = canvas.height;
+
+/* Input */
+const keys = { left:false, right:false, up:false };
+window.addEventListener('keydown', e => {
+  if (e.key==='ArrowLeft' || e.key==='a') keys.left = true;
+  if (e.key==='ArrowRight' || e.key==='d') keys.right = true;
+  if (e.code==='Space') keys.up = true;
+});
+window.addEventListener('keyup', e => {
+  if (e.key==='ArrowLeft' || e.key==='a') keys.left = false;
+  if (e.key==='ArrowRight' || e.key==='d') keys.right = false;
+  if (e.code==='Space') keys.up = false;
+});
+
+/* ---------- Game variables ---------- */
+let cameraX = 0;
+let score = 0;
+let running = false;
+
+/* Player (world coordinates) */
+const PLAYER_W = 28, PLAYER_H = 36;
+let player = createPlayer(60, 420);
+
+/* physics */
+const GRAV = 1.2, MOVE = 0.6, MAXV = 6, JUMP_V = -16, FRICTION = 0.85, MAX_FALL = 24;
+
+/* Worlds and levels */
+const worlds = [
+  {
+    name: 'Sahara',
+    bg: 'sahara',
+    levels: [
+      // level 0: hard-ish
+      {
+        width: 2400,
+        startX: 60, startY: 420,
+        goalX: 2200,
+        platforms: [ // ground + platforms
+          {x:0,y:480,w:2400,h:120},
+          {x:300,y:380,w:160,h:16},
+          {x:600,y:320,w:160,h:16},
+          {x:1000,y:360,w:200,h:16},
+          {x:1400,y:340,w:160,h:16},
+          {x:1800,y:300,w:160,h:16}
+        ],
+        pipes: [{x:800,y:420,w:64,h:64}],
+        stars: [{x:320,y:350},{x:620,y:290},{x:1000,y:330}],
+        enemies: [{x:700,y:440,w:28,h:28,range:[660,900],speed:1.2},{x:1500,y:320,w:28,h:28,range:[1400,1560],speed:1.4}],
+        boss: false
+      },
+      // level 1: hard-ish
+      {
+        width: 2600,
+        startX:50,startY:420,goalX:2400,
+        platforms:[
+          {x:0,y:480,w:2600,h:120},
+          {x:250,y:410,w:120,h:16},
+          {x:480,y:350,w:160,h:16},
+          {x:820,y:300,w:140,h:16},
+          {x:1220,y:340,w:180,h:16},
+          {x:1620,y:300,w:120,h:16},
+          {x:1920,y:360,w:200,h:16}
+        ],
+        pipes:[{x:1100,y:420,w:64,h:64}],
+        stars:[{x:270,y:380},{x:500,y:320},{x:1250,y:310}],
+        enemies:[{x:560,y:330,w:28,h:28,range:[520,700],speed:1.6},{x:1300,y:320,w:28,h:28,range:[1260,1360],speed:1.0}],
+        boss:false
+      },
+      // level 2: boss level
+      {
+        width: 2200,
+        startX:60,startY:420,goalX:2000,
+        platforms:[
+          {x:0,y:480,w:2200,h:120},
+          {x:260,y:380,w:140,h:16},
+          {x:560,y:320,w:160,h:16},
+          {x:960,y:260,w:140,h:16},
+          {x:1360,y:300,w:160,h:16}
+        ],
+        pipes:[{x:1800,y:420,w:64,h:64}],
+        stars:[{x:300,y:350},{x:600,y:290},{x:980,y:230}],
+        enemies:[{x:420,y:340,w:28,h:28,range:[390,560],speed:1.6}],
+        boss: {x:1800,y:360,w:96,h:96,hp:18}
+      }
+    ]
+  },
+  {
+    name: 'Forêt',
+    bg: 'foret',
+    levels: [
+      // level 0
+      {
+        width: 2400, startX:50,startY:420,goalX:2200,
+        platforms:[
+          {x:0,y:480,w:2400,h:120},
+          {x:320,y:380,w:160,h:16},
+          {x:720,y:320,w:180,h:16},
+          {x:1100,y:360,w:160,h:16},
+          {x:1500,y:300,w:160,h:16}
+        ],
+        pipes:[], stars:[{x:340,y:350},{x:740,y:290},{x:1110,y:330}], enemies:[{x:820,y:300,w:28,h:28,range:[780,940],speed:1.5}],
+        boss:false
+      },
+      // level 1
+      {
+        width:2600,startX:50,startY:420,goalX:2400,
+        platforms:[
+          {x:0,y:480,w:2600,h:120},
+          {x:220,y:420,w:120,h:16},
+          {x:520,y:360,w:160,h:16},
+          {x:860,y:300,w:140,h:16},
+          {x:1260,y:340,w:160,h:16},
+          {x:1660,y:300,w:160,h:16}
+        ],
+        pipes:[], stars:[{x:240,y:380},{x:560,y:320},{x:1260,y:310}], enemies:[{x:600,y:340,w:28,h:28,range:[560,720],speed:1.6},{x:1500,y:320,w:28,h:28,range:[1440,1560],speed:1.2}],
+        boss:false
+      },
+      // level 2 boss
+      {
+        width:2200,startX:60,startY:420,goalX:2000,
+        platforms:[
+          {x:0,y:480,w:2200,h:120},
+          {x:260,y:380,w:140,h:16},
+          {x:520,y:320,w:160,h:16},
+          {x:920,y:260,w:140,h:16},
+          {x:1320,y:300,w:160,h:16}
+        ],
+        pipes:[], stars:[{x:300,y:350},{x:620,y:290},{x:920,y:230}], enemies:[{x:420,y:340,w:28,h:28,range:[390,560],speed:1.6}],
+        boss:{x:1700,y:340,w:96,h:96,hp:22}
+      }
+    ]
+  }
+];
+
+/* runtime */
+let curWorld = 0;
+let curLevel = 0;
+let level = worlds[curWorld].levels[curLevel];
+let enemies = [];
+let stars = [];
+let boss = null;
+
+/* helpers */
+function createPlayer(x,y){
+  return {x:x,y:y,w:PLAYER_W,h:PLAYER_H,vx:0,vy:0,jumpsLeft:1,onGround:false,facing:1,alive:true};
+}
+function resetEntities(){
+  level = worlds[curWorld].levels[curLevel];
+  enemies = level.enemies ? level.enemies.map(e=>Object.assign({},e)) : [];
+  stars = level.stars ? level.stars.map(s=>Object.assign({},s, {col:false})) : [];
+  boss = level.boss ? Object.assign({}, level.boss) : null;
+}
+
+/* start/load */
+function loadLevel(w,l){
+  curWorld=w; curLevel=l;
+  level = worlds[curWorld].levels[curLevel];
+  player = createPlayer(level.startX || 60, level.startY || 420);
+  cameraX = Math.max(0, player.x - VIEW_W/2);
+  resetEntities();
+  score = 0;
+  updateUI();
+  // background switch
+  bgS.style.opacity = (worlds[curWorld].bg==='sahara') ? 1.0 : 0.0;
+  bgF.style.opacity = (worlds[curWorld].bg==='foret') ? 1.0 : 0.0;
+}
+startBtn.addEventListener('click', ()=> { loadLevel(0,0); running=true; });
+
+function updateUI(){ worldName.textContent = worlds[curWorld].name; levelNum.textContent = (curLevel+1); scoreEl.textContent = score; }
+
+/* ---------- Game loop ---------- */
+let last = performance.now();
+function gameLoop(now){
+  const dt = Math.min(1/30, (now-last)/1000);
+  last = now;
+  if (running) update(dt);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+requestAnimationFrame(gameLoop);
+
+/* ---------- Update ---------- */
+function update(dt){
+  if(!player.alive) return;
+
+  // horizontal movement
+  if(keys.left){ player.vx = Math.max(-MAXV, player.vx - MOVE); player.facing=-1; }
+  else if(keys.right){ player.vx = Math.min(MAXV, player.vx + MOVE); player.facing=1; }
+  else player.vx *= FRICTION;
+
+  // jumping (single + double)
+  if(keys.up){
+    if(player.onGround){ player.vy = JUMP_V; player.onGround=false; player.jumpsLeft = 1; }
+    else if(player.jumpsLeft > 0){ player.vy = JUMP_V; player.jumpsLeft--; }
+    keys.up = false;
+  }
+
+  // apply gravity
+  player.vy += GRAV; if(player.vy > MAX_FALL) player.vy = MAX_FALL;
+  player.x += player.vx; player.y += player.vy;
+
+  // simple world bounds left/right
+  if(player.x < 0) player.x = 0;
+  if(player.x > level.width - player.w) player.x = level.width - player.w;
+
+  // platform collisions - only consider top collision for landing
+  player.onGround = false;
+  for(const p of level.platforms){
+    // horizontal overlap
+    if(player.x + player.w > p.x && player.x < p.x + p.w){
+      const prevBottom = player.y - player.vy + player.h;
+      const curBottom = player.y + player.h;
+      if(prevBottom <= p.y && curBottom >= p.y && player.vy >= 0){
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+        player.jumpsLeft = 1;
+      }
+    }
+  }
+
+  // obstacles (pipes) collision: block horizontal movement and landing
+  for(const pipe of level.pipes || []){
+    if(rectsIntersect(player, pipe)){
+      // simple resolution: if coming from top, land; else push back horizontally
+      if(player.y + player.h - player.vy <= pipe.y){
+        player.y = pipe.y - player.h; player.vy = 0; player.onGround = true; player.jumpsLeft=1;
+      } else {
+        // push player out
+        if(player.x < pipe.x) player.x = pipe.x - player.w - 1;
+        else player.x = pipe.x + pipe.w + 1;
+        player.vx = 0;
+      }
+    }
+  }
+
+  // enemies update & collision
+  for(let i = enemies.length-1; i >= 0; i--){
+    const e = enemies[i];
+    // patrol
+    e.x += (e.dir||1) * (e.speed || 1.2);
+    if(!e.dir) e.dir = 1;
+    if(e.x < e.range[0]) { e.x = e.range[0]; e.dir = 1; }
+    if(e.x > e.range[1]) { e.x = e.range[1]; e.dir = -1; }
+
+    // collision with player
+    if(rectsIntersect(player, e)){
+      // stomp if player is falling and was above enemy
+      if(player.vy > 0 && (player.y + player.h - player.vy) <= e.y + 4){
+        // kill enemy
+        enemies.splice(i,1);
+        player.vy = JUMP_V * 0.5; // bounce
+        score += 50;
+      } else {
+        // player dies -> reset to level start
+        player.alive = false;
+        running = false;
+        setTimeout(()=> { alert('Tu es mort ! Recommence le niveau.'); loadLevel(curWorld, curLevel); }, 80);
+        return;
+      }
+    }
+  }
+
+  // boss logic: simple moving boss that can be stomped or damaged from front (player jump only)
+  if(boss){
+    // move boss slowly left-right around its x by 120 px
+    boss._dir = boss._dir || 1;
+    boss._baseX = boss._baseX || boss.x;
+    boss.x += boss._dir * 0.8;
+    if(boss.x < boss._baseX - 120) boss._dir = 1;
+    if(boss.x > boss._baseX + 120) boss._dir = -1;
+
+    if(rectsIntersect(player, boss)){
+      if(player.vy > 0 && (player.y + player.h - player.vy) <= boss.y + 8){
+        // stomp: reduce hp
+        boss.hp = (boss.hp || boss.hp) - 2;
+        player.vy = JUMP_V * 0.6;
+        if(boss.hp <= 0){
+          // boss defeated
+          boss = null;
+          score += 500;
+        }
+      } else {
+        // die
+        player.alive = false;
+        running = false;
+        setTimeout(()=> { alert('Tu es mort sur le boss !'); loadLevel(curWorld, curLevel); }, 80);
+        return;
+      }
+    }
+  }
+
+  // stars collection
+  for(const s of stars){
+    if(!s.col && rectsIntersect(player, {x:s.x,y:s.y,w:16,h:16})){
+      s.col = true; score += 100;
+    }
+  }
+
+  // camera follow
+  cameraX = Math.max(0, Math.min(level.width - VIEW_W, player.x - VIEW_W/2 + player.w/2));
+
+  // progress: if player reaches goal -> next level
+  if(player.x >= level.goalX){
+    curLevel++;
+    if(curLevel >= worlds[curWorld].levels.length){
+      curWorld++;
+      curLevel = 0;
+      if(curWorld >= worlds.length){
+        running = false;
+        setTimeout(()=> { alert('Félicitations ! Tu as terminé tous les mondes !'); loadLevel(0,0); }, 80);
+        return;
+      }
+    }
+    loadLevel(curWorld, curLevel);
+    return;
+  }
+
+  updateUI();
+}
+
+/* ---------- Rendering ---------- */
+function render(){
+  // clear
+  ctx.clearRect(0,0,VIEW_W,VIEW_H);
+
+  // far back: sky is canvas background
+  // parallax mountains / dunes or trees
+  renderParallax();
+
+  // ground / platforms (world -> screen)
+  // draw platforms
+  ctx.save();
+  ctx.translate(-cameraX, 0);
+
+  // platforms
+  for(const p of level.platforms){
+    drawPlatform(p.x, p.y, p.w, p.h);
+  }
+
+  // pipes
+  for(const pipe of level.pipes || []){
+    drawPipe(pipe.x, pipe.y, pipe.w, pipe.h);
+  }
+
+  // stars
+  for(const s of stars){
+    if(!s.col) drawStar(s.x, s.y);
+  }
+
+  // enemies
+  for(const e of enemies){
+    drawEnemy(e.x, e.y, e.w, e.h);
+  }
+
+  // boss
+  if(boss){
+    drawBoss(boss.x, boss.y, boss.w, boss.h, boss.hp);
+  }
+
+  // goal marker
+  ctx.fillStyle = '#FFD166';
+  ctx.fillRect(level.goalX - 8, 500 - 120, 16, 120);
+
+  // player (draw last so above)
+  drawPlayer(player.x, player.y, player.w, player.h, player.facing);
+
+  ctx.restore();
+
+  // UI overlay (boss HP)
+  if(boss){
+    // simple hp bar
+    const hp = boss.hp || boss.hp;
+    const barW = 220;
+    const x = (VIEW_W - barW)/2;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x-4,20,barW+8,28);
+    ctx.fillStyle = '#333'; ctx.fillRect(x,26,barW,16);
+    ctx.fillStyle = '#e63946'; ctx.fillRect(x,26,barW * Math.max(0, Math.min(1,(boss.hp/boss._maxHP))),16);
+    ctx.fillStyle = '#fff'; ctx.font='14px monospace'; ctx.fillText('Boss', x+6, 38);
+  }
+}
+
+/* ---------- Drawing primitives: pixel-ish style ---------- */
+function drawPlatform(x,y,w,h){
+  ctx.fillStyle = '#6b8f3f';
+  roundRect(ctx, x, y, w, h, 6);
+  ctx.fill();
+  // top trim
+  ctx.fillStyle = '#8fcf66';
+  ctx.fillRect(x+4, y+2, w-8, 6);
+}
+function drawPipe(x,y,w,h){
+  // pipe base
+  ctx.fillStyle = '#1EA27A';
+  ctx.fillRect(x, y, w, h);
+  // pipe rim
+  ctx.fillStyle = '#13a077';
+  ctx.fillRect(x-6, y-10, w+12, 12);
+  // shading lines
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  ctx.fillRect(x+6, y+4, 2, h-8);
+}
+function drawStar(x,y){
+  ctx.fillStyle = '#FFD700';
+  ctx.fillRect(x, y, 16, 16);
+  // small sparkle
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(x+6, y+4, 2, 2);
+}
+function drawEnemy(x,y,w,h){
+  // simple goomba-like
+  ctx.fillStyle = '#7b3f00'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#000'; ctx.fillRect(x+6, y+6, 4, 4); ctx.fillRect(x+w-10, y+6, 4, 4);
+  ctx.fillStyle = '#551e00'; ctx.fillRect(x, y+h-6, w, 6);
+}
+function drawBoss(x,y,w,h,hp){
+  ctx.fillStyle = '#b22222'; ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#5a0f0f'; ctx.fillRect(x+8, y+8, w-16, h-16);
+  // eyes
+  ctx.fillStyle = '#fff'; ctx.fillRect(x+w/2-10, y+12, 6, 6); ctx.fillRect(x+w/2+6, y+12, 6, 6);
+}
+function drawPlayer(x,y,w,h,facing){
+  // draw a stylized pixel player: head + body + feet
+  ctx.fillStyle = '#ffcc00';
+  ctx.fillRect(x, y, w, h); // body
+  ctx.fillStyle = '#222'; ctx.fillRect(x+6, y+8, 4, 6); ctx.fillRect(x + w - 10, y+8, 4, 6);
+  // small shoe to indicate facing
+  ctx.fillStyle = '#7b3f00'; ctx.fillRect(x + (facing>0?6:w-12), y + h - 6, 8, 6);
+}
+
+/* ---------- Utilities ---------- */
+function rectsIntersect(a,b){
+  return a.x < b.x + (b.w||0) && a.x + a.w > b.x && a.y < b.y + (b.h||0) && a.y + a.h > b.y;
+}
+function roundRect(ctx,x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+/* ---------- Parallax / background (simple) ---------- */
+function renderParallax(){
+  // dunes / trees as very simple shapes to emulate depth
+  ctx.save();
+  // far mountains / dunes
+  if(worlds[curWorld].bg === 'sahara'){
+    ctx.fillStyle = '#f0c17a';
+    ctx.beginPath();
+    ctx.ellipse(VIEW_W/2, 380, VIEW_W*1.2, 140, 0, 0, Math.PI*2);
+    ctx.fill();
+  } else {
+    // forest: distant trees
+    ctx.fillStyle = '#2e8b57';
+    for(let i=0;i<10;i++){
+      const px = (i*250 - cameraX*0.2) % (VIEW_W + 200) - 100;
+      ctx.beginPath();
+      ctx.moveTo(px, 320); ctx.lineTo(px+40, 420); ctx.lineTo(px-40,420); ctx.closePath();
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+/* ---------- init ---------- */
+loadLevel(0,0);
+resetEntities();
+updateUI();
+
+</script>
+</body>
+</html>
+

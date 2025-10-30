@@ -1,0 +1,39 @@
+body {
+  background: #222;
+  color: white;
+  font-family: "Press Start 2P", sans-serif;
+  margin: 0;
+  overflow: hidden;
+  text-align: center;
+}
+
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0,0,0,0.5);
+  padding: 10px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+button {
+  background: #ff9800;
+  border: none;
+  border-radius: 5px;
+  padding: 6px 12px;
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+button:hover {
+  background: #ffc107;
+}
+
+canvas {
+  display: block;
+  margin: 60px auto 0;
+  background: #87ceeb;
+  border: 3px solid #333;
+}
